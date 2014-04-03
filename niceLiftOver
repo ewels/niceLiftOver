@@ -1,0 +1,385 @@
+#!/usr/bin/perl
+
+########################################
+# Nice Lift Over                       #
+# ==================================== #
+# Wrapper script to take an input file #
+# and liftOver the co-ordinates        #
+# in place, leaving all other data     #
+# in tact.                             #
+########################################
+
+use strict;
+use warnings;
+use Getopt::Long;
+use FindBin qw($Bin);
+use lib "$FindBin::Bin/source";
+
+#
+# Command Line Options
+#
+my $skip = 0;
+my $chrcol;
+my $startcol;
+my $endcol;
+my $delim;
+my $repdomain;
+my $listchains;
+my $version;
+my $help;
+
+my $config_result = GetOptions(
+	"skip=i" => \$skip,
+	"chr=s" => \$chrcol,
+	"start=s"  => \$startcol,
+	"end=s" => \$endcol,
+	"delim=s" => \$delim,
+	"repdomain" => \$repdomain,
+	"listchains" => \$listchains,
+	"version" => \$version,
+	"help" => \$help
+);
+die "Could not parse options" unless ($config_result);
+
+my $liftover = shift(@ARGV);
+my @files = @ARGV;
+
+#
+# Help messages etc
+#
+if($listchains){
+	print "\nAvailable liftOver chain file IDs:\n - ";
+	my @chainfiles = glob "$Bin/chainfiles/*.over.chain";
+	@chainfiles = map ( substr( $_, length("$Bin/chainfiles/"), -11), @chainfiles);
+	print join ("\n - ", @chainfiles)."\n\n";
+	print "You can download more chain files from http://hgdownload.cse.ucsc.edu/downloads.html\n\n";
+	exit;
+}
+if($version){
+	die "\nRunning niceLiftOver version 0.1\nWritten by Phil Ewels, 2014. http://phil.ewels.co.uk\n\n";
+}
+if($help){
+	print niceLiftOver_help();
+	exit;
+}
+
+# Check we have what we need
+unless($liftover){
+	die "\nUsage: niceLiftOver <chain ID> <input file 1> <input file n..>\neg: niceLiftOver hg18ToHg19 *.txt\n\nRun niceLiftOver --help for more information\n\n";
+}
+if(scalar @ARGV == 0){
+	die "\nNo input files supplied.\nPlease run liftOver --help for more information\n\n";
+}
+
+#
+# File format shortcuts
+#
+if($repdomain){
+	$skip = 18;
+	$chrcol = 2;
+	$startcol = 3;
+	$endcol = 4;
+}
+
+#
+# Try to work out columns and delimiter if not specified
+#
+open (FIRSTFILE,$files[0]) or die "Can't read ".$files[0].": $!";
+my $header = <FIRSTFILE>;
+chomp($header);
+close (FIRSTFILE);
+# work out delimiter
+if(!$delim){
+	my @delimiters = ('\t', ',', '\s+');
+	foreach my $delimiter (@delimiters){
+		my @sections = split(/$delimiter/, $header);
+		if(scalar @sections > 2){
+			$delim = $delimiter;
+			last;
+		}
+	}
+	if(!$delim){
+		die "\nError - could not determine column delimiter. Please specify with --delim\n\nFirst line of first file:\n$header\n\n";		
+	}
+}
+my @cols = split(/$delim/, $header);
+# work out chr, start and end
+if(!$chrcol){
+	foreach my $i (0 .. $#cols){
+		if($cols[$i] =~ /chr/i){
+			$chrcol = $i;
+			last;
+		}
+	}
+	if(!$chrcol){
+		print "\nError - could not determine chromosome column. Please specify with --chr\n";		
+	}
+} else {
+	$chrcol--; # Command line specifies 1 - based index.
+}
+if(!$startcol){
+	foreach my $i (0 .. $#cols){
+		if($cols[$i] =~ /start/i){
+			$chrcol = $i;
+			last;
+		}
+	}
+	if(!$startcol){
+		print "\nError - could not determine start position column. Please specify with --start\n";		
+	}
+}
+if(!$endcol){
+	foreach my $i (0 .. $#cols){
+		if($cols[$i] =~ /end/i){
+			$chrcol = $i;
+			last;
+		}
+	}
+	if(!$endcol){
+		print "\nError - could not determine end position column. Please specify with --end\n";		
+	}
+}
+# Bail if we don't have what we need
+if(!$chrcol || !$startcol || !$endcol){
+	print "\nColumn numbers with value from first line in first file:\n";
+	foreach my $i (0 .. $#cols){
+		print "  ".($i+1)." : ".$cols[$i]."\n";
+	}
+	print "\n";
+	exit;
+}
+
+# Find what files we have in this directory before we start
+my @oldfiles = glob "*.bed *.bedmapped *.bedunmapped";
+
+#
+# Start processing files
+#
+foreach my $infile (@files){
+
+	my $outfile = $infile."_$liftover.txt";
+	my $unmappedfile = $infile."_".$liftover."_unmapped.txt";
+
+	# Open our input file
+	open (IN,$infile) or die "Can't read $infile: $!";
+
+	# Open our output file
+	if (-e $outfile) {
+		print "$outfile already exists. Overwrite [Y/N]? ";
+		my $answer = <STDIN>;
+		if ($answer !~ /^y/i) {
+			die "Exiting...\n";
+		}
+	}
+	open (OUT,'>',$outfile) or die "Can't write to $outfile: $!";
+
+
+	#
+	# Create a new file with stripped positions
+	#
+
+	# Open our positions file
+	my $positionsfile = $infile."_positions.txt";
+	open (POSITIONS,'>',$positionsfile) or die "Can't write to $positionsfile: $!";
+
+	# Loop through input file
+	my $i = 0;
+	while (<IN>) {
+		$i++;
+		
+		# Skip the headers
+		if($i <= $skip){
+			next;
+		}
+		
+		# Pull out fields
+		chomp;
+		my @sections = split(/$delim/);
+		my $chr = $sections[$chrcol];
+		my $start = $sections[$startcol];
+		my $end = $sections[$endcol];
+		my $position = "$chr:$start-$end\n";
+		print POSITIONS $position;
+		
+	}
+	# Reset the file pointer
+	seek(IN, 0, 0);
+	close (POSITIONS);
+
+
+	#
+	# Run liftOver
+	#
+	my $liftoverRawFile = $infile."_liftOverRaw.txt";
+	my $chainfile = "$Bin/chainfiles/$liftover.over.chain";
+	system ("liftOver -positions $positionsfile $chainfile $liftoverRawFile $unmappedfile 2>/dev/null");
+
+	#
+	# Go through the input file again and write output
+	#
+
+	# Open mapped
+	open (MAPPED, $liftoverRawFile) or die "Can't read $unmappedfile: $!";
+
+	# Open unmapped
+	open (UNMAPPED, $unmappedfile) or die "Can't read $unmappedfile: $!";
+	my $unmapped = <UNMAPPED>; # Skip reason for being unmapped
+	$unmapped = <UNMAPPED>;
+	chomp($unmapped);
+	my ($un_chr, $un_start, $un_end) = split(/[:-]/, $unmapped);
+
+	# Loop through input file, piping to liftOver
+	$i = 0;
+	my $unmapped_count = 0;
+	while (<IN>) {
+		chomp;
+		$i++;
+		
+		# Skip the headers
+		if($i <= $skip){
+			print OUT "$_\n";
+			next;
+		}
+		
+		# Pull out fields
+		my @sections = split(/$delim/);
+		my $chr = $sections[$chrcol];
+		my $start = $sections[$startcol];
+		my $end = $sections[$endcol];
+		my $LO_input = "$chr:$start-$end\n";
+		
+		# Does this match the next line in the unmapped file?
+		if($chr eq $un_chr && $start eq $un_start && $end eq $un_end){
+		
+			
+			
+			# Move to next line in unmapped file
+			if(<UNMAPPED>){ # Skips reason for being unmapped
+				$unmapped_count++;
+				$unmapped = <UNMAPPED>;
+				chomp($unmapped);
+				($un_chr, $un_start, $un_end) = split(/[:-]/, $unmapped);
+			} else {
+				($un_chr, $un_start, $un_end) = ("", "", "");
+			}
+			
+		} else {
+		
+			# Get the liftOver result
+			my $mapped = <MAPPED>;
+			chomp($mapped);
+			
+			# Assign to the sections
+			($sections[$chrcol], $sections[$startcol], $sections[$endcol]) = split(/[:-]/, $mapped);
+			
+			# Print sections out
+			print OUT join("\t", @sections)."\n";
+			
+		}
+
+		
+	}
+	my $mapped = $i - $unmapped_count - 17;
+	warn "$infile - Lifted over $mapped positions, failed with $unmapped_count positions\n";
+
+	#
+	# Clean Up Files
+	#
+	unlink $positionsfile;
+	unlink $liftoverRawFile;
+	
+}
+
+# Find new bed files since we started and delete them
+my @newfiles = glob "*.bed *.bedmapped *.bedunmapped";
+my %oldfileshash = map { $_ => 1 } @oldfiles;
+my %newfileshash = map { $_ => 1 } @newfiles;
+my @createdfiles;
+foreach my $fn (keys %newfileshash) {
+	unless (defined $oldfileshash{$fn}) {
+		unlink $fn;
+	}
+}
+
+
+
+
+
+
+
+
+
+
+
+
+#
+# Help
+#
+sub niceLiftOver_help {
+	my $help;
+	$help = <<"EOT";
+########################################
+# Nice Lift Over                       #
+# ==================================== #
+# Wrapper script to take an input file #
+# and liftOver the co-ordinates        #
+# in place, leaving all other data     #
+# in tact.                             #
+########################################
+	
+USAGE
+	niceLiftOver <chain ID> *.files
+	
+PARAMETERS
+	--listchains
+		List the available chain file IDs.
+		These are stored in $Bin/chainfiles/
+		Files must end in .over.chain
+		
+	--skip <int>
+		Skip n lines at the start of each file
+		
+	--chr <int>
+		Integer to specify which column should be used for the chromosome
+		1 based index, eg. First column = 1 (not 0)
+		Defaults to searching the first line for the first occurance of "chr"
+	
+	--start <int>
+		Integer to specify which column should be used for the start position
+		1 based index, eg. First column = 1 (not 0)
+		Defaults to searching the first line for the first occurance of "start"
+		
+	--end <int>
+		Integer to specify which column should be used for the end position
+		1 based index, eg. First column = 1 (not 0)
+		Defaults to searching the first line for the first occurance of "end"
+	
+	--delim <str>
+		String delimiter to use to split columns
+		If not specified, niceLiftOver will try to split the first line using
+		tabs, commas and whitespace (in that order)
+	
+	--repdomain
+		Shortcut to specify repdomain.com file format
+	
+	--version
+		Print the version of the software
+	
+	--help
+		Print this help message.
+
+AUTHOR
+	Written by Phil Ewels, Babraham Institute.
+
+EOT
+	
+	return ($help);
+
+}
+
+
+
+
+
+
+
