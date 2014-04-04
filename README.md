@@ -1,7 +1,7 @@
 niceLiftOver
 ============
 
-niceLiftOver is a simple wrapper script to take an input file and liftOver the co-ordinates in place, leaving all other data in tact. 
+niceLiftOver is a simple wrapper script to take an input file and liftOver the co-ordinates in place, leaving all other data intact. 
 
 It can be used with any file format and will try to guess the delimiter and which columns contain the chromosome, start and end positions.
 
@@ -10,6 +10,8 @@ Requirements
 ------------
 niceLiftOver runs on the command line, so is best suited to unix environments.
 It is written in Perl and uses the `strict`, `warnings`, `Getopt::Long` and `FindBin` packages. These are core packages and typically come with most Perl installations.
+
+niceLiftOver is a wrapper script for the [UCSC liftOver tool](http://genome.ucsc.edu/cgi-bin/hgLiftOver) ([download here](http://hgdownload.cse.ucsc.edu/admin/exe/)). `liftOver` must be installed and added to your PATH.
 
 Installation
 ------------
