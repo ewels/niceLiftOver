@@ -45,9 +45,9 @@ my $help;
 
 my $config_result = GetOptions(
 	"skip=i" => \$skip,
-	"chr=s" => \$chrcol,
-	"start=s"  => \$startcol,
-	"end=s" => \$endcol,
+	"chr=i" => \$chrcol,
+	"start=i"  => \$startcol,
+	"end=i" => \$endcol,
 	"delim=s" => \$delim,
 	"repdomain" => \$repdomain,
 	"listchains" => \$listchains,
@@ -120,6 +120,7 @@ open (FIRSTFILE,$files[0]) or die "Can't read ".$files[0].": $!";
 my $header = <FIRSTFILE>;
 chomp($header);
 close (FIRSTFILE);
+
 # work out delimiter
 if(!$delim){
 	my @delimiters = ('\t', ',', '\s+');
@@ -133,9 +134,16 @@ if(!$delim){
 	if(!$delim){
 		die "\nError - could not determine column delimiter. Please specify with --delim\n\nFirst line of first file:\n$header\n\n";		
 	}
+} elsif($delim =~ /tab/){
+	$delim =~ s/tab/\t/g;
+} elsif($delim =~ /nl/){
+	$delim =~ s/nl/\n/g;
+} elsif($delim =~ /cr/){
+	$delim =~ s/cr/\r/g;
 }
 my @cols = split(/$delim/, $header);
 chomp @cols;
+
 # work out chr, start and end
 if(!defined($chrcol)){
 	foreach my $i (0 .. $#cols){
@@ -149,6 +157,7 @@ if(!defined($chrcol)){
 	}
 } else {
 	$chrcol--; # Command line specifies 1 - based index.
+	unless(defined($cols[$chrcol])) { die "\nError - Chromosome column ".($chrcol+1)." doesn't exist! Problem with your delimiter? Exiting.\n"; }
 }
 if(!defined($startcol)){
 	foreach my $i (0 .. $#cols){
@@ -167,6 +176,7 @@ if(!defined($startcol)){
 	}
 } else {
 	$startcol--; # Command line specifies 1 - based index.
+	unless(defined($cols[$startcol])){ die "\nError - Start column ".($startcol+1)." doesn't exist! Problem with your delimiter? Exiting.\n"; }
 }
 if(!defined($endcol)){
 	foreach my $i (0 .. $#cols){
@@ -185,9 +195,11 @@ if(!defined($endcol)){
 	}
 } else {
 	$endcol--; # Command line specifies 1 - based index.
+	unless(defined($cols[$endcol])) { die "\nError - End column ".($endcol+1)." doesn't exist! Problem with your delimiter? Exiting.\n"; }
 }
+
 # Bail if we don't have what we need
-if(!defined($chrcol) || !defined($startcol) || !defined($endcol)){
+unless(defined($chrcol) && defined($startcol) && defined($endcol)){
 	print "\nColumn numbers with value from first line in first file:\n";
 	foreach my $i (0 .. $#cols){
 		print "  ".($i+1)." : ".$cols[$i]."\n";
@@ -259,8 +271,9 @@ foreach my $infile (@files){
 	#
 	my $liftoverRawFile = $infile."_liftOverRaw.txt";
 	my $chainfile = "$Bin/chainfiles/$liftover.over.chain";
-	if(system ("liftOver -positions $positionsfile $chainfile $liftoverRawFile $unmappedfile 2>/dev/null")){
-		die "\nError - liftOver system command failed. $!\n";
+	my $cmd = "liftOver -positions $positionsfile $chainfile $liftoverRawFile $unmappedfile 2>/dev/null";
+	if(system ($cmd)){
+		die "\nError - liftOver system command failed. $!\nCommand: $cmd\n";
 	}
 	
 
@@ -339,7 +352,9 @@ foreach my $infile (@files){
 	#
 	unlink $positionsfile;
 	unlink $liftoverRawFile;
-	
+	if(-z $unmappedfile){ # zero bytes
+		unlink $unmappedfile;
+	}
 }
 
 # Find new bed files since we started and delete them
@@ -410,6 +425,8 @@ PARAMETERS
 		String delimiter to use to split columns
 		If not specified, niceLiftOver will try to split the first line using
 		tabs, commas and whitespace (in that order)
+		Special characters cannot be used on the command line. Use 'nl', 'cr'
+		or 'tab' for /\n /\r or /\t characters.
 	
 	--repdomain
 		Shortcut to specify repdomain.com file format
