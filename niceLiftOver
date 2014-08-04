@@ -78,6 +78,23 @@ if($help){
 	exit;
 }
 
+# Parse the liftover name and check we have the file
+if($liftover){
+	# Simple method to pull out basename if we have a path
+	if($liftover =~ m/[\/\\]([^\/\\]+)$/){
+		warn "\nChain files should be kept in the niceLiftOver directory. Stripping file path.\n";
+		$liftover = $1;
+	}
+	# Strip .over.chain if specified
+	if($liftover =~ m/\.over\.chain$/){
+		warn "\nWe just need the liftOver name, not the full filename. Stripping .over.chain\n";
+		$liftover =~ s/\.over\.chain$//;
+	}
+	unless(-e "$Bin/chainfiles/$liftover.over.chain"){
+		die "\nError - liftOver chain file $Bin/chainfiles/$liftover.over.chain doesn't exist.\n\nRun niceLiftOver --help for more information\n\n";
+	}
+}
+
 # Check we have what we need
 unless($liftover){
 	die "\nUsage: niceLiftOver <chain ID> <input file 1> <input file n..>\neg: niceLiftOver hg18ToHg19 *.txt\n\nRun niceLiftOver --help for more information\n\n";
@@ -118,44 +135,59 @@ if(!$delim){
 	}
 }
 my @cols = split(/$delim/, $header);
+chomp @cols;
 # work out chr, start and end
-if(!$chrcol){
+if(!defined($chrcol)){
 	foreach my $i (0 .. $#cols){
 		if($cols[$i] =~ /chr/i){
 			$chrcol = $i;
 			last;
 		}
 	}
-	if(!$chrcol){
+	if(!defined($chrcol)){
 		print "\nError - could not determine chromosome column. Please specify with --chr\n";		
 	}
 } else {
 	$chrcol--; # Command line specifies 1 - based index.
 }
-if(!$startcol){
+if(!defined($startcol)){
 	foreach my $i (0 .. $#cols){
 		if($cols[$i] =~ /start/i){
 			$chrcol = $i;
 			last;
 		}
 	}
-	if(!$startcol){
-		print "\nError - could not determine start position column. Please specify with --start\n";		
+	if(!defined($startcol)){
+		if(defined($chrcol) && $cols[$chrcol + 1] =~ /^\d+$/){
+			$startcol = $chrcol + 1;
+			warn "Guessing that column $startcol is the start position (it comes after the chromosome and contains a number)\n";
+		} else {
+			print "\nError - could not determine start position column. Please specify with --start\n";
+		}
 	}
+} else {
+	$startcol--; # Command line specifies 1 - based index.
 }
-if(!$endcol){
+if(!defined($endcol)){
 	foreach my $i (0 .. $#cols){
 		if($cols[$i] =~ /end/i){
 			$chrcol = $i;
 			last;
 		}
 	}
-	if(!$endcol){
-		print "\nError - could not determine end position column. Please specify with --end\n";		
+	if(!defined($endcol)){
+		if(defined($startcol) && $cols[$startcol + 1] =~ /^\d+$/){
+			$endcol = $startcol + 1;
+			warn "Guessing that column $endcol is the end position (it comes after the start position and contains a number)\n";
+		} else {
+			print "\nError - could not determine end position column. Please specify with --end\n";
+		}
 	}
+} else {
+	$endcol--; # Command line specifies 1 - based index.
 }
 # Bail if we don't have what we need
-if(!$chrcol || !$startcol || !$endcol){
+if(!defined($chrcol) || !defined($startcol) || !defined($endcol)){
 	print "\nColumn numbers with value from first line in first file:\n";
 	foreach my $i (0 .. $#cols){
 		print "  ".($i+1)." : ".$cols[$i]."\n";
@@ -227,21 +259,28 @@ foreach my $infile (@files){
 	#
 	my $liftoverRawFile = $infile."_liftOverRaw.txt";
 	my $chainfile = "$Bin/chainfiles/$liftover.over.chain";
-	system ("liftOver -positions $positionsfile $chainfile $liftoverRawFile $unmappedfile 2>/dev/null");
+	if(system ("liftOver -positions $positionsfile $chainfile $liftoverRawFile $unmappedfile 2>/dev/null")){
+		die "\nError - liftOver system command failed. $!\n";
+	}
+	
 
 	#
 	# Go through the input file again and write output
 	#
 
 	# Open mapped
-	open (MAPPED, $liftoverRawFile) or die "Can't read $unmappedfile: $!";
-
+	open (MAPPED, $liftoverRawFile) or die "Can't read $liftoverRawFile: $!";
+	
 	# Open unmapped
-	open (UNMAPPED, $unmappedfile) or die "Can't read $unmappedfile: $!";
-	my $unmapped = <UNMAPPED>; # Skip reason for being unmapped
-	$unmapped = <UNMAPPED>;
-	chomp($unmapped);
-	my ($un_chr, $un_start, $un_end) = split(/[:-]/, $unmapped);
+	my ($un_chr, $un_start, $un_end) = 0;
+	my $unmapped;
+	unless(-z $unmappedfile){ # File is 0 bytes - no unmapped
+		open (UNMAPPED, $unmappedfile) or die "Can't read $unmappedfile: $!";
+		$unmapped = <UNMAPPED>; # Skip reason for being unmapped
+		$unmapped = <UNMAPPED>;
+		chomp($unmapped);
+		($un_chr, $un_start, $un_end) = split(/[:-]/, $unmapped);
+	}
 
 	# Loop through input file, piping to liftOver
 	$i = 0;
@@ -266,8 +305,6 @@ foreach my $infile (@files){
 		# Does this match the next line in the unmapped file?
 		if($chr eq $un_chr && $start eq $un_start && $end eq $un_end){
 		
-			
-			
 			# Move to next line in unmapped file
 			if(<UNMAPPED>){ # Skips reason for being unmapped
 				$unmapped_count++;
@@ -294,7 +331,7 @@ foreach my $infile (@files){
 
 		
 	}
-	my $mapped = $i - $unmapped_count - 17;
+	my $mapped = $i - $unmapped_count - $skip;
 	warn "$infile - Lifted over $mapped positions, failed with $unmapped_count positions\n";
 
 	#
